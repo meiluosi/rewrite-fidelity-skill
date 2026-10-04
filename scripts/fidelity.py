@@ -279,7 +279,7 @@ CATEGORIES = [
     ("condition", "error", [
         r"\bonly\s+if\b", r"\bif\b", r"\bunless\b", r"\bwhen(?:ever)?\b", r"\buntil\b",
         r"\botherwise\b", r"\bexcept\b", r"\bprovided\s+that\b", r"\bin\s+case\b",
-        r"\bbefore\b", r"\bafter\b", r"\bwhile\b",
+        r"\bbefore\b", r"\bafter\b",
         r"仅当", r"只有当?", r"如果", r"假如", r"假设", r"若(?!干)", r"一旦", r"只要", r"除非", r"否则",
         r"除了", r"(?<=[" + CJK + r"])(?:以外|之外)", r"直到", r"前提是", r"条件是",
         r"之前", r"之后", r"以前", r"以后",
@@ -495,6 +495,8 @@ SELFTEST = [
      "The format does not match.", "The format is different.", set(), {"modal.prohibit"}),
     ("lost upper bound is an error",
      "Retry at most 3 times.", "Retry 3 times.", {"scope.limit"}, {"number"}),
+    ("'while processing' is not a condition",
+     "An error occurred while processing the request.", "The request failed.", set(), {"condition"}),
     ("dropped unless is an error",
      "Delete the cache unless the job is running.", "Delete the cache.", {"condition"}, set()),
     ("missing flag is an error",
