@@ -225,9 +225,14 @@ CJK = r"一-鿿"
 
 CATEGORIES = [
     # --- modality -----------------------------------------------------------
+    # 「最好不要」和「不建议」不放进同一个桶：一致率评测里读者的读法不同。
+    # 前者常被读成「默认不做」，后者常被读成「由读者决定」。互相替换只给 warning。
+    ("modal.not-recommend.soft", "warn", [
+        r"\bhad\s+better\s+not\b", r"最好不要", r"最好别", r"尽量不要", r"尽量别", r"尽量避免",
+    ]),
     ("modal.not-recommend", "error", [
         r"\bshould\s+not\b", r"\bshouldn't\b", r"\bnot\s+recommended\b",
-        r"不建议", r"不推荐", r"不宜", r"最好不要", r"最好别", r"尽量不要", r"尽量别", r"尽量避免",
+        r"不建议", r"不推荐", r"不宜",
     ]),
     ("modal.prohibit", "error", [
         r"(?:^|(?<=[.!?:]\s)|(?<=\n))(?:Do\s+not|Don't|Never)\b",
@@ -341,7 +346,8 @@ def _context(text, start, end, width=14):
 
 MESSAGES = {
     "modal.prohibit": "Prohibition count changed. A lost 'must not'/'不得' turns a ban into silence.",
-    "modal.not-recommend": "'should not'/'不建议' count changed.",
+    "modal.not-recommend": "'should not'/'不建议' count changed. If it replaced 最好不要/尽量不要, the reading changed (see the .soft finding).",
+    "modal.not-recommend.soft": "'最好不要'/'尽量不要' count changed. Readers take these as 'default: do not', but '不建议'/'should not' as 'left to the reader'. If one replaced the other, state the default action.",
     "modal.not-required": "'need not'/'不必' count changed.",
     "modal.possibility": "Hedge count changed. A dropped 'may have'/'可能' promotes a guess to a fact.",
     "modal.approx": "Approximation marker changed. '约 5 秒' -> '5 秒' claims precision the source did not have.",
@@ -477,8 +483,10 @@ SELFTEST = [
      "如果目标文件已存在的话，跳过。", "目标文件已存在时，跳过。", set(), {"condition"}),
     ("以下步骤 is not a bound",
      "清理日志目录。", "按以下步骤清理日志目录：", set(), {"scope.limit"}),
-    ("最好不要 equals 不建议",
-     "最好不要覆盖文件。", "不建议覆盖文件。", set(), {"modal.not-recommend", "modal.prohibit"}),
+    ("最好不要 -> 不建议 is a warning, not an error",
+     "最好不要覆盖文件。", "不建议覆盖文件。", set(), {"modal.prohibit"}),
+    ("最好不要 kept as 尽量不要 is still a warning only",
+     "最好不要覆盖文件。", "尽量不要覆盖文件。", set(), {"modal.prohibit", "modal.not-recommend"}),
     ("90% 以上 is a bound",
      "使用率 90% 以上时，清理。", "使用率 ≥ 90% 时，清理。", set(), {"scope.limit"}),
     ("dropped 'Do not' is an error",
@@ -533,7 +541,15 @@ def selftest():
             print("      " + render(compare(original, rewrite)).replace("\n", "\n      "))
         else:
             print(f"ok    {name}")
-    print(f"\n{len(SELFTEST) - failed}/{len(SELFTEST)} passed")
+    # 软推荐被替换时必须有 warning：不能静默通过。
+    swap = {(f["severity"], f["check"]) for f in compare("最好不要覆盖文件。", "不建议覆盖文件。")}
+    total = len(SELFTEST) + 1
+    if ("warn", "modal.not-recommend.soft") in swap:
+        print("ok    最好不要 -> 不建议 produces a warning")
+    else:
+        failed += 1
+        print("FAIL  最好不要 -> 不建议 produced no soft-recommend warning:", sorted(swap))
+    print(f"\n{total - failed}/{total} passed")
     return 1 if failed else 0
 
 

@@ -39,7 +39,8 @@ The script compares:
 | `modal.require` / `modal.prohibit` | must, shall, Do not …, 必须, 应, 不得, 禁止, 不要 … | error in both directions |
 | `modal.possibility` | may have, might, could, likely, 可能, 也许, 未必 … | error when lost |
 | `modal.approx` | about, ~, 约, 大约, 左右 … | error when lost |
-| `modal.not-recommend` / `modal.not-required` | should not, need not, 不建议, 最好不要, 不必 … | error when lost |
+| `modal.not-recommend` / `modal.not-required` | should not, need not, 不建议, 不必 … | error when lost |
+| `modal.not-recommend.soft` | had better not, 最好不要, 尽量不要 … | warning. Kept apart from `not-recommend` on purpose: in an agreement eval readers took 最好不要 as "default: no" but 不建议 as "left to the reader" |
 | `condition` | if, unless, until, otherwise, before, 如果, 除非, 否则, 仅当, 之前 … | error when lost |
 | `scope.limit` | at most, only, more than, 至少, 不超过, 仅, 3 次以上 … | error when lost |
 | `negation` | not, never, without, 不, 没有, 未, 无 … | warning |
