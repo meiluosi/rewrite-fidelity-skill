@@ -60,6 +60,12 @@ CAMEL = re.compile(r"\b[a-z]+[A-Z][A-Za-z0-9]*\b")
 CALL = re.compile(r"\b[A-Za-z_][\w.]*\(\)")
 QUOTED = re.compile(r"\"([^\"\n]{1,80})\"|“([^”\n]{1,80})”|「([^」\n]{1,80})」|『([^』\n]{1,80})』")
 
+# 中文文本里数字、文件名、参数紧贴汉字是常态（「不超过2048个字节」「使用--force」）。
+# Python 默认把汉字当作 \w，会让这些字面量被漏掉，加空格的改写稿又被当成「新增」。
+# 所以这些模式的 \w、\b 只认 ASCII。
+for _name in ("URL", "PATH", "FILENAME", "FLAG", "ERROR_CODE", "VERSION", "CONST", "SNAKE", "CAMEL", "CALL"):
+    globals()[_name] = re.compile(globals()[_name].pattern, re.ASCII)
+
 # (kind, pattern, severity-if-missing). Order matters: wider patterns first.
 LITERAL_KINDS = [
     ("code-block", FENCE_BLOCK, "error"),
@@ -164,7 +170,7 @@ EN_ONE_LOOSE = re.compile(r"\bonce\b", re.I)
 
 LIST_MARKER = re.compile(r"^[ \t]*(?:\d+[.)]|[-*+])[ \t]+", re.M)
 ORDINAL = re.compile(r"(?:第\s*\d+\s*[步条项章节个次]?|\b[Ss]tep\s+\d+\b|\b\d+(?:st|nd|rd|th)\b)")
-ARABIC = re.compile(r"(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.])\d+(?:\.\d+)?")
+ARABIC = re.compile(r"(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.])\d+(?:\.\d+)?", re.ASCII)
 
 
 def _fmt_num(value):
@@ -497,6 +503,16 @@ SELFTEST = [
      "Retry at most 3 times.", "Retry 3 times.", {"scope.limit"}, {"number"}),
     ("'while processing' is not a condition",
      "An error occurred while processing the request.", "The request failed.", set(), {"condition"}),
+    ("digits next to Chinese text are numbers (no space needed)",
+     "文件大小不超过2048个字节。", "文件大小不超过 2048 字节。", set(), {"number", "scope.limit"}),
+    ("a 100km range written without spaces",
+     "规划100km以内的步行方案。", "工具规划 100 km 以内的步行方案。", set(), {"number"}),
+    ("file name glued to Chinese text",
+     "编辑config.yaml文件。", "编辑 config.yaml 文件。", set(), {"literal.filename", "literal.path"}),
+    ("identifier glued to Chinese text",
+     "把user_id传入函数。", "把 user_id 传入函数。", set(), {"literal.identifier"}),
+    ("flag glued to Chinese text",
+     "使用--force参数。", "使用 --force 参数。", set(), {"literal.flag"}),
     ("dropped unless is an error",
      "Delete the cache unless the job is running.", "Delete the cache.", {"condition"}, set()),
     ("missing flag is an error",
