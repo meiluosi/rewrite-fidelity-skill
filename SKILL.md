@@ -1,7 +1,7 @@
 ---
 name: rewrite-fidelity
 description: "Use after any rewrite, simplification, or plain-language pass — English or Chinese — to check that the new text still says what the original said: same numbers, same code and identifiers, same conditions and exceptions, same requirement strength (MUST/SHOULD/MAY, 必须/建议/可以), same hedges (may have / 可能), same negations and scope. Pairs with asd-ste100, zh-disambiguate, jianming-zhongwen and any other rewrite skill. Triggers: check the rewrite, did the rewrite change the meaning, verify nothing was lost, fidelity check, 改写有没有改意思, 核对改写, 保真检查, 对比原文和改写稿. Not a style checker: it never judges whether the rewrite reads better."
-version: 0.1.0
+version: 0.1.1
 ---
 
 # Rewrite Fidelity
