@@ -1,10 +1,73 @@
 # rewrite-fidelity：改写保真检查
 
-[English](#english)
+对比原文和改写稿，找出丢失或改动的数字、代码、条件、否定、上下限与情态强度。可作为 Claude Code skill 使用，也可单独运行 Python 脚本；支持中文和英文。
 
-一个 Claude Code skill，检查改写稿有没有改变原文的意思。支持中文和英文。
+[English](#english) · [安装与第一次使用](#安装与第一次使用) · [完整示例](examples/README.md) · [局限](#局限)
 
-asd-ste100、jianming-zhongwen 这类简化写作 skill 自带的 linter 只看一份文本，检查的是句子形状。它们不能比较原文和改写稿，所以发现不了这种情况：改写稿读起来更顺了，说的却已经不是同一件事。asd-ste100 的 README 也写明了这一点。本项目补的就是这个缺口。
+## 「最多 3 次」变成「3 次」，会查出什么
+
+| 原文 | 改写稿 |
+|---|---|
+| 重试最多 3 次。 | 重试 3 次。 |
+
+用仓库中的 `scripts/fidelity.py` 检查这两句话，实际输出为：
+
+```text
+fidelity: 1 error(s), 0 warning(s)
+
+ERROR scope.limit  decreased  (original 1 → rewrite 0)
+      Bound or limit changed (at most/only/至少/不超过/以上). A lost bound turns a limit into an exact value or removes it.
+      · original: 重试[最多] 3 次。
+```
+
+数字 3 还在，但上限「最多」消失了。脚本报告 `scope.limit` 错误，并以退出码 1 结束。
+
+**这是机械检查，不能证明语义相同。**例如，[条件脱离动作的示例](examples/zh-detached-condition)保留了所有标记，脚本仍返回 0 个错误。skill 还要求模型逐条核对原文中的事实。
+
+## 安装与第一次使用
+
+安装 Claude Code skill：
+
+```bash
+npx skills add meiluosi/rewrite-fidelity-skill
+```
+
+或者：
+
+```bash
+git clone https://github.com/meiluosi/rewrite-fidelity-skill ~/.claude/skills/rewrite-fidelity
+```
+
+在 Claude Code 里提供两版文本：
+
+```text
+用 rewrite-fidelity 核对这次改写有没有改变意思。
+
+原文：重试最多 3 次。
+改写稿：重试 3 次。
+```
+
+也可以说「核对一下这次改写有没有改意思」或 “Check that the rewrite kept the meaning”，并附上原文和改写稿。
+
+### 直接运行脚本
+
+只依赖 Python 3.8+ 标准库。先获取仓库，再创建两份文本，即可复现上面的输出：
+
+```bash
+git clone https://github.com/meiluosi/rewrite-fidelity-skill
+cd rewrite-fidelity-skill
+printf '%s\n' '重试最多 3 次。' > original.txt
+printf '%s\n' '重试 3 次。' > rewrite.txt
+python3 scripts/fidelity.py original.txt rewrite.txt
+```
+
+检测到 error 时退出码为 1。其他常用命令：
+
+```bash
+python3 scripts/fidelity.py --json original.txt rewrite.txt
+python3 scripts/fidelity.py --selftest
+sh examples/run-examples.sh
+```
 
 ## 它查什么
 
@@ -28,35 +91,9 @@ asd-ste100、jianming-zhongwen 这类简化写作 skill 自带的 linter 只看�
 
 脚本只做机械检查，计数一致不代表意思一致（见 [`examples/zh-detached-condition`](examples/zh-detached-condition)）。所以 SKILL.md 还要求模型做第二遍检查：把原文拆成原子事实，逐条在改写稿里找对应。
 
-## 安装
+## 为什么要比较两份文本
 
-```bash
-npx skills add meiluosi/rewrite-fidelity-skill
-```
-
-或者：
-
-```bash
-git clone https://github.com/meiluosi/rewrite-fidelity-skill ~/.claude/skills/rewrite-fidelity
-```
-
-## 使用
-
-在 Claude Code 里直接说：
-
-```
-核对一下这次改写有没有改意思
-Check that the rewrite kept the meaning
-```
-
-也可以单独运行脚本，只依赖 Python 3.8+ 标准库：
-
-```bash
-python3 scripts/fidelity.py original.txt rewrite.txt          # 有 error 时退出码为 1
-python3 scripts/fidelity.py --json original.txt rewrite.txt
-python3 scripts/fidelity.py --selftest
-sh examples/run-examples.sh
-```
+asd-ste100、jianming-zhongwen 这类简化写作 skill 自带的 linter 只看一份文本，检查句子形式。它们无法比较原文和改写稿，因此需要另一步检查改写是否改变了意思。本项目提供这一步检查。
 
 ## 和其他 skill 配合
 
@@ -77,12 +114,47 @@ MIT
 
 ## English
 
-A Claude Code skill that checks whether a rewrite still says what the original said. It works on English and Chinese text.
+Compare an original with its rewrite to find lost or altered numbers, code, conditions, negations, bounds, and requirement strength. Use it as a Claude Code skill or a standalone Python script. It supports English and Chinese.
 
-Style linters such as asd-ste100's `ste-lint.py` check one text. This skill compares two: the original and the rewrite. It reports lost or added literals (code, paths, flags, identifiers, versions), numbers (normalized across `3` / `three` / `三`), requirement strength (MUST / SHOULD / MAY, 必须 / 建议 / 可以), hedges (may have, 可能), approximations (about, 约), conditions (unless, 除非), negations, and scope bounds (at most, 不超过).
+### A result you can reproduce
 
-The script is the mechanical first pass. SKILL.md adds a model pass that compares the texts one atomic claim at a time. Markers can all survive while a condition moves to a different action. `examples/zh-detached-condition` shows a case where this happens.
+Changing `重试最多 3 次。` (“Retry at most 3 times.”) to `重试 3 次。` (“Retry 3 times.”) keeps the number but drops the upper bound. The script reports `ERROR scope.limit`, with 1 error, 0 warnings, and exit code 1. The exact output is [shown above](#最多-3-次变成3-次会查出什么).
+
+### Install and try
+
+```bash
+npx skills add meiluosi/rewrite-fidelity-skill
+```
+
+Or install into Claude Code's skills directory:
+
+```bash
+git clone https://github.com/meiluosi/rewrite-fidelity-skill ~/.claude/skills/rewrite-fidelity
+```
+
+Then provide both texts in Claude Code:
+
+```text
+Use rewrite-fidelity to check whether this rewrite changed the meaning.
+
+Original: Retry at most 3 times.
+Rewrite: Retry 3 times.
+```
+
+The standalone script needs only Python 3.8+ and its standard library. Clone the repository, enter its directory, and compare two UTF-8 files:
 
 ```bash
 python3 scripts/fidelity.py original.txt rewrite.txt   # exit 1 on error-level findings
+python3 scripts/fidelity.py --json original.txt rewrite.txt
 ```
+
+### What it checks
+
+Style linters such as asd-ste100's `ste-lint.py` check one text. This skill compares two: the original and the rewrite. It reports lost or added literals (code, paths, flags, identifiers, versions), numbers (normalized across `3` / `three` / `三`), requirement strength (MUST / SHOULD / MAY, 必须 / 建议 / 可以), hedges (may have, 可能), approximations (about, 约), conditions (unless, 除非), negations, and scope bounds (at most, 不超过).
+
+The script is the mechanical first pass. [SKILL.md](SKILL.md) adds a model pass that compares the texts one atomic claim at a time. Markers can all survive while a condition moves to a different action; [`examples/zh-detached-condition`](examples/zh-detached-condition) shows a bad rewrite that produces 0 script errors.
+
+The rules use regular expressions and can produce false positives. English “may” needs contextual interpretation. Numeric checks do not compare units. This is not a translation checker: both texts must use the same language, though mixed Chinese/English text is supported.
+
+See the [examples](examples/README.md) and [integration guide](references/integration.md) for use with rewriting skills and CI.
+
