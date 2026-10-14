@@ -326,15 +326,39 @@ CATEGORIES = [
 
 GROWTH_IS_ERROR = {"modal.require", "modal.prohibit"}
 
-# Comparison operators are counted one by one. scope.limit counts them together, so "p < 0.05" -> "p > 0.05"
-# (same total) passed silently. Arrows (->, =>, <-) are not comparisons.
-OPERATOR = re.compile(r"(?<![-=<>])(<=|>=|<|>|≤|≥)(?![-=<>])")
-_OP_NORM = {"<=": "≤", ">=": "≥"}
+# Threshold directions. scope.limit counts bounds together, so "p < 0.05" -> "p > 0.05" (same total) passed silently.
+# Symbols and words share four buckets (>= <= > <), so a rewrite that turns "90% 以上" into "≥ 90%" changes nothing,
+# while "不超过 200 元" -> "超过 200 元", "at least 3" -> "at most 3" and "p < 0.05" -> "p > 0.05" each move a count between buckets.
+# Longer phrases come first and are blanked as they match ("不超过" before "超过", "大于等于" before "大于").
+_THRESHOLDS = [
+    ("≥", re.compile(r"大于等于|不小于|不低于|不少于|至少|及以上|或以上|或更高|或更多|或更大|以上|\bat\s+least\b|\bno\s+(?:less|fewer)\s+than\b|\b(?:greater|more)\s+than\s+or\s+equal\s+to\b|>=|≥", re.I)),
+    ("≤", re.compile(r"小于等于|不大于|不高于|不多于|不超过|至多|最多|及以下|或以下|或更低|或更少|或更小|以下|以内|之内|\bat\s+most\b|\bno\s+more\s+than\b|\bup\s+to\b(?=\s*\d)|<=|≤", re.I)),
+    (">", re.compile(r"超过|大于|高于|多于|\b(?:more|greater|higher|larger)\s+than\b|\bexceed(?:s|ed)?\b|(?<=[\w)）%])[ \t]*(?<![-=<>])>(?![-=<>])(?=[ \t]*[\w(（.\-])", re.I)),
+    ("<", re.compile(r"小于|低于|少于|不足|不满(?!足|意)|\b(?:less|fewer|lower|smaller)\s+than\b|(?<=[\w)）%])[ \t]*(?<![-=<>])<(?![-=<>])(?=[ \t]*[\w(（.\-])", re.I)),
+]
+_PLACEHOLDER = re.compile(r"<[^<>\s]{1,30}>")      # <域名>, <prefix>: placeholders and tags, not comparisons
+
+
+def threshold_counts(text):
+    text = _PLACEHOLDER.sub(" ", text)
+    c = Counter()
+    for sym, pat in _THRESHOLDS:
+        text, n = pat.subn(lambda m: " " * len(m.group(0)), text)
+        if n:
+            c[sym] += n
+    return c
 
 # Words that make a claim stronger than a hedge or a plain statement. A rewrite that adds them has changed the claim.
+# Unambiguous claim-strengtheners: more of them in the rewrite is an error.
 STRENGTH = re.compile(
-    r"\b(?:proved?|proves|proven|proof|demonstrates?|definitely|certainly|undoubtedly|guarantees?|guaranteed|clearly|obviously|always|entirely|completely|fully)\b"
-    r"|证明|证实|一定(?!程度|的|范围|数量|条件)|完全|必然|毫无疑问|显然|始终|总是|绝对|确凿",
+    r"\b(?:proved?|proves|proven|proof|demonstrates?|definitely|certainly|undoubtedly|guarantees?|guaranteed)\b"
+    r"|证明|证实|必然|毫无疑问|显然|确凿",
+    re.I)
+# Words that often strengthen a claim but have harmless readings (不一定 is a hedge, 绝对值 is a term, 列完全部 is 列完 + 全部).
+# More of them is a warning, never an error.
+STRENGTH_SOFT = re.compile(
+    r"\b(?:clearly|obviously|always|entirely|completely|fully)\b"
+    r"|(?<!不)一定(?!程度|的|范围|数量|条件)|完全(?!部|体)|绝对(?!值)|始终|总是",
     re.I)
 
 
@@ -405,11 +429,11 @@ MESSAGES = {
 _UP_EN = r"(?:better|greater|higher|larger|bigger|faster|stronger|longer|more\s+\w+|superior|safer|cheaper)"
 _DOWN_EN = r"(?:worse|lower|smaller|slower|weaker|shorter|fewer|less\s+\w+|inferior)"
 _EN_THAN = re.compile(r"(?P<a>[^.;:\n]{1,80}?)\s+(?:(?:is|are|was|were|be|being)\s+)?(?:much\s+|far\s+|slightly\s+|significantly\s+|clearly\s+)?(?P<rel>" + _UP_EN + "|" + _DOWN_EN + r")\s+than\s+(?P<b>[^.;:,\n]{1,60})", re.I)
-_EN_VERB = re.compile(r"(?P<a>[^.;:\n]{1,60}?)\s+(?P<rel>outperforms?|beats?|exceeds?|surpasses|outperformed|beat|exceeded|surpassed|underperforms?|trails?|lags?|underperformed|trailed|lagged)(?:\s+behind)?\s+(?P<b>[^.;:,\n]{1,60})", re.I)
+_EN_VERB = re.compile(r"(?P<a>[^.;:\n]{1,60}?)\s+(?P<rel>outperforms?|beats?|surpasses|outperformed|beat|surpassed|underperforms?|trails?|lags?|underperformed|trailed|lagged)(?:\s+behind)?\s+(?P<b>[^.;:,\n]{1,60})", re.I)
 _ZH_BI = re.compile(r"(?P<a>[^，。；;,.\n]{1,24}?)(?<![对相])比(?![如较例喻赛率])(?P<b>[^，。；;,.\n]{1,20}?)(?:更|还|要|稍|略|明显|远|都|也)?(?P<rel>好|强|高|大|快|多|长|优|胜|低|差|弱|小|慢|少|短|劣)")
-_ZH_REL = re.compile(r"(?P<a>[^，。；;,.\n]{1,24}?)(?P<rel>优于|好于|强于|高于|大于|多于|快于|长于|胜过|超过|优先于|劣于|差于|弱于|低于|小于|少于|慢于|短于|不如|逊于|落后于)(?P<b>[^，。；;,.\n]{1,20})")
+_ZH_REL = re.compile(r"(?P<a>[^，。；;,.\n]{1,24}?)(?P<rel>优于|好于|强于|快于|胜过|优先于|劣于|差于|弱于|慢于|不如|逊于|落后于)(?P<b>[^，。；;,.\n]{1,20})")
 _SYM = re.compile(r"(?P<a>[^\s<>=≤≥，。；;,]{1,24})\s*(?P<rel>[<>≤≥]|<=|>=)\s*(?P<b>[^\s<>=≤≥，。；;,]{1,24})")
-_UP_WORDS = ("好","强","高","大","快","多","长","优","胜","better","greater","higher","larger","bigger","faster","stronger","longer","more","superior","safer","cheaper","outperform","beat","exceed","surpass","优于","好于","强于","高于","大于","多于","快于","长于","胜过","超过","优先于",">","≥")
+_UP_WORDS = ("好","强","高","大","快","多","长","优","胜","better","greater","higher","larger","bigger","faster","stronger","longer","more","superior","safer","cheaper","outperform","beat","surpass","优于","好于","强于","快于","胜过","优先于",">","≥")
 _STOP = re.compile(r"\b(?:the|a|an|of|in|on|with|that|this|our|its|their)\b|[的这该其而且但是了]")   # lowercase only: "A" / "B" are usually labels, not articles
 
 
@@ -430,6 +454,8 @@ def extract_comparisons(text):
     """Return a list of (winner, loser, snippet). Operands are short normalized strings."""
     out, seen = [], set()
     def add(a, b, up, snip):
+        if re.match(r"\s*[-+]?\d", b):                  # numeric right side: a threshold, handled by compare.op
+            return
         a, b = _op_norm(a)[-14:], _op_norm(b)[:14]
         if len(a) < 1 or len(b) < 1 or a == b:
             return
@@ -441,7 +467,7 @@ def extract_comparisons(text):
         for m in pat.finditer(text):
             rel = m.group("rel")
             if pat is _ZH_REL:
-                up = rel not in ("劣于", "差于", "弱于", "低于", "小于", "少于", "慢于", "短于", "不如", "逊于", "落后于")
+                up = rel not in ("劣于", "差于", "弱于", "慢于", "不如", "逊于", "落后于")
             elif pat is _EN_VERB:
                 up = rel.lower().rstrip("s") not in ("underperform", "trail", "lag", "underperformed", "trailed", "lagged")
             elif pat is _SYM:
@@ -573,22 +599,34 @@ def compare(original, rewrite):
 
     findings.extend(compare_direction(rest_o, rest_r))
 
-    op_o, op_r = operator_counts(rest_o), operator_counts(rest_r)
-    if op_o != op_r:
+    th_o, th_r = threshold_counts(rest_o), threshold_counts(rest_r)
+    n_o, n_r = sum(th_o.values()), sum(th_r.values())
+    if th_o != th_r and n_r <= n_o:
+        # Same total, different buckets = a flipped bound (error). Fewer thresholds = a lost bound (warning).
+        # More thresholds in the rewrite is not reported here: scope.limit already warns about added bounds.
+        flipped = n_o == n_r
         findings.append({
-            "severity": "error", "check": "compare.op", "change": "changed",
-            "original": sum(op_o.values()), "rewrite": sum(op_r.values()),
-            "items": [f"{k}: {op_o.get(k, 0)} → {op_r.get(k, 0)}" for k in sorted(set(op_o) | set(op_r)) if op_o.get(k, 0) != op_r.get(k, 0)],
-            "message": "Comparison operators changed. A flipped < / > reverses the claim even when the total count is unchanged.",
+            "severity": "error" if flipped else "warn", "check": "compare.op", "change": "flipped" if flipped else "lost",
+            "original": n_o, "rewrite": n_r,
+            "items": [f"{k}: {th_o.get(k, 0)} → {th_r.get(k, 0)}" for k in ("≥", "≤", ">", "<") if th_o.get(k, 0) != th_r.get(k, 0)],
+            "message": ("Threshold directions moved between buckets while the total stayed the same: a flipped bound "
+                        "(不超过 ↔ 超过, at least ↔ at most, < ↔ >) reverses the claim. Words and symbols share a bucket, so 以上 → ≥ is fine."
+                        if flipped else
+                        "A threshold in the original has no counterpart in the rewrite (words such as 以上/超过/at most and symbols such as ≥ > count together). Check that no bound was dropped."),
         })
     st_o, st_r = len(STRENGTH.findall(rest_o)), len(STRENGTH.findall(rest_r))
-    if st_o != st_r:
+    so_o, so_r = len(STRENGTH_SOFT.findall(rest_o)), len(STRENGTH_SOFT.findall(rest_r))
+    if st_o != st_r or so_o != so_r:
+        strong_up = st_r > st_o
         findings.append({
-            "severity": "error" if st_r > st_o else "warn", "check": "strength",
-            "change": "increased" if st_r > st_o else "decreased", "original": st_o, "rewrite": st_r,
-            "items": ["original: " + _context(rest_o, m.start(), m.end()) for m in STRENGTH.finditer(rest_o)][:6]
-                     + ["rewrite:  " + _context(rest_r, m.start(), m.end()) for m in STRENGTH.finditer(rest_r)][:6],
-            "message": "Claim-strength words changed. More of them strengthens the claim beyond the source; fewer may weaken it.",
+            "severity": "error" if strong_up else "warn", "check": "strength",
+            "change": "increased" if (st_r + so_r) > (st_o + so_o) else "decreased",
+            "original": st_o + so_o, "rewrite": st_r + so_r,
+            "items": ["original: " + _context(rest_o, m.start(), m.end()) for m in list(STRENGTH.finditer(rest_o)) + list(STRENGTH_SOFT.finditer(rest_o))][:6]
+                     + ["rewrite:  " + _context(rest_r, m.start(), m.end()) for m in list(STRENGTH.finditer(rest_r)) + list(STRENGTH_SOFT.finditer(rest_r))][:6],
+            "message": ("A claim-strengthening word (proved, definitely, 证明, 必然 ...) was added. The rewrite claims more than the source."
+                        if strong_up else
+                        "Claim-strength words changed (always, 一定, 完全 ...). These often strengthen a claim but have harmless readings: read the context."),
         })
 
     order = {"error": 0, "warn": 1}
@@ -730,6 +768,36 @@ SELFTEST = [
      "Accuracy: A > B on all sets.", "Accuracy: B > A on all sets.", {"compare.dir"}, set()),
     ("比如 / 比较 are not comparisons",
      "比如这个参数；比较两个版本。", "例如这个参数；对照两个版本。", set(), {"compare.dir"}),
+    ("以上 and ≥ are one bucket",
+     "磁盘使用率达到 90% 以上时清理。", "磁盘使用率 ≥ 90% 时清理。", set(), {"compare.op"}),
+    ("超过 and > are one bucket",
+     "文件数超过 1000 个时变慢。", "文件数 > 1000 个时变慢。", set(), {"compare.op"}),
+    ("不超过 and ≤ are one bucket",
+     "单笔不超过 200 元可直接退款。", "单笔 ≤ 200 元可直接退款。", set(), {"compare.op"}),
+    ("at most and no more than are one bucket",
+     "Use at most 3 retries.", "Use no more than 3 retries.", set(), {"compare.op"}),
+    ("不超过 -> 超过 is a flipped bound",
+     "单笔不超过 200 元可以直接退款。", "单笔超过 200 元可以直接退款。", {"compare.op"}, set()),
+    ("小于 -> 不小于 is a flipped bound",
+     "剩余天数小于 14 才处理。", "剩余天数不小于 14 才处理。", {"compare.op"}, set()),
+    ("at least -> at most is a flipped bound",
+     "Retry at least 3 times.", "Retry at most 3 times.", {"compare.op"}, set()),
+    ("以上 -> 以下 is a flipped bound",
+     "磁盘使用率 90% 以上时清理。", "磁盘使用率 90% 以下时清理。", {"compare.op"}, set()),
+    ("或更高 is the same bound as 以上; 不满足 is not a bound",
+     "请加 Maintainer 以上的角色。", "请加 Maintainer 或更高的角色。Developer 不满足要求。", set(), {"compare.op"}),
+    ("placeholders like <域名> are not comparison operators",
+     "执行脚本并传入 <域名>。", "执行脚本，传入 <域名>。", set(), {"compare.op"}),
+    ("a Markdown blockquote > is not a comparison operator",
+     "> 注意：先备份。\n删除旧文件。", "注意：先备份。\n删除旧文件。", set(), {"compare.op"}),
+    ("不一定 is a hedge, not a strong word",
+     "修好这一处不一定能通过。", "只改这一个字段，不一定能通过校验。", set(), {"strength"}),
+    ("绝对值 is a term, not a strong word",
+     "差额的绝对值不超过 0.01 元。", "差额绝对值不超过 0.01 元。", set(), {"strength"}),
+    ("列完全部 is not 完全",
+     "如果一页没列完，继续翻页。", "如果一页没有列完全部文件，继续翻页。", set(), {"strength"}),
+    ("an ambiguous strengthener only warns",
+     "这个设置总是生效。", "这个设置始终生效，而且完全可靠。", set(), {"strength"}),
     ("trailing period is not part of a path",
      "Edit config/app.yaml.", "Open and edit config/app.yaml.", set(), {"literal.path", "literal.filename"}),
 ]
