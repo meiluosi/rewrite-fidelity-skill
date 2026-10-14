@@ -47,8 +47,10 @@ The script compares:
 | `scope` | all, every, some, 所有, 每个, 部分 … | warning |
 | `modal.recommend` / `permit` / `ability` / `may` | should, can, may, 建议, 可以, 能 … | warning |
 | `literal.quoted` | "UI labels", 「错误原文」 | warning |
+| `compare.op` | each of `<` `>` `≤` `≥` counted separately (`<=` = `≤`); arrows are not comparisons. A flipped operator keeps the total but changes the claim | error |
+| `strength` | claim-strengthening words (proved, always, definitely, 证明, 一定, 完全, 显然 ...) | error when the rewrite has **more**; warning when fewer |
 
-Errors exit 1. `--json` gives structured output. `--strict` also fails on warnings. `--ignore scope,negation` skips checks by name prefix.
+Errors exit 1. The text output ends with `RESULT: FAIL | PASS WITH WARNINGS | PASS` (`result` in `--json`); quote that line when you hand the check on to another skill or a person. A PASS means nothing mechanical changed, not that the meaning is equivalent. `--json` gives structured output. `--strict` also fails on warnings. `--ignore scope,negation` skips checks by name prefix.
 
 A count that goes **up** is usually a split sentence that repeats "if" or "不". Read it, but expect it to be harmless. The exception is a new requirement or prohibition: that is a new instruction, so it stays an error.
 

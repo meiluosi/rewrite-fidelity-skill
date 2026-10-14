@@ -15,6 +15,10 @@ that carry meaning and that a simplifying rewrite tends to lose or change:
     negation     not / never / 不 / 没有 / 未 ...
     scope        all / only / at least / 所有 / 仅 / 至少 ...
     quoted       "..." “...” 「...」 (UI labels, error text)
+    compare.op   each comparison operator counted separately (< > <= >= ≤ ≥); a flipped
+                 operator keeps the total count but is still an error
+    strength     claim-strengthening words (proved, always, definitely, 证明, 一定, 完全 ...):
+                 more of them in the rewrite is an error, fewer is a warning
 
 It reports what disappeared or appeared. It cannot prove that meaning is
 preserved: a count that matches can still hide a flipped condition. Use it as
@@ -25,6 +29,9 @@ Usage:
     fidelity.py --json ORIGINAL REWRITE
     fidelity.py --strict ORIGINAL REWRITE   # warnings also fail the run
     fidelity.py --selftest
+
+The last line of the text output is `RESULT: FAIL | PASS WITH WARNINGS | PASS`
+(also `result` in --json). A pass means "nothing mechanical changed", not "same meaning".
 
 Exit 0 when no error-level finding, 1 otherwise, 2 on usage error.
 Stdlib only, Python 3.8+.
@@ -170,7 +177,7 @@ EN_ONE_LOOSE = re.compile(r"\bonce\b", re.I)
 
 LIST_MARKER = re.compile(r"^[ \t]*(?:\d+[.)]|[-*+])[ \t]+", re.M)
 ORDINAL = re.compile(r"(?:第\s*\d+\s*[步条项章节个次]?|\b[Ss]tep\s+\d+\b|\b\d+(?:st|nd|rd|th)\b)")
-ARABIC = re.compile(r"(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.])\d+(?:\.\d+)?", re.ASCII)
+ARABIC = re.compile(r"(?<![\w.])\d+(?:\.\d+)?[eE][+-]?\d+(?![\w])|(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.])\d+(?:\.\d+)?", re.ASCII)
 
 
 def _fmt_num(value):
@@ -317,6 +324,25 @@ CATEGORIES = [
 
 GROWTH_IS_ERROR = {"modal.require", "modal.prohibit"}
 
+# Comparison operators are counted one by one. scope.limit counts them together, so "p < 0.05" -> "p > 0.05"
+# (same total) passed silently. Arrows (->, =>, <-) are not comparisons.
+OPERATOR = re.compile(r"(?<![-=<>])(<=|>=|<|>|≤|≥)(?![-=<>])")
+_OP_NORM = {"<=": "≤", ">=": "≥"}
+
+# Words that make a claim stronger than a hedge or a plain statement. A rewrite that adds them has changed the claim.
+STRENGTH = re.compile(
+    r"\b(?:proved?|proves|proven|proof|demonstrates?|definitely|certainly|undoubtedly|guarantees?|guaranteed|clearly|obviously|always|entirely|completely|fully)\b"
+    r"|证明|证实|一定(?!程度|的|范围|数量|条件)|完全|必然|毫无疑问|显然|始终|总是|绝对|确凿",
+    re.I)
+
+
+def operator_counts(text):
+    c = Counter()
+    for m in OPERATOR.finditer(text):
+        c[_OP_NORM.get(m.group(1), m.group(1))] += 1
+    return c
+
+
 _COMPILED = [
     (name, sev, re.compile("|".join(f"(?:{p})" for p in pats), re.I))
     for name, sev, pats in CATEGORIES
@@ -441,9 +467,35 @@ def compare(original, rewrite):
             "message": MESSAGES[name],
         })
 
+    op_o, op_r = operator_counts(rest_o), operator_counts(rest_r)
+    if op_o != op_r:
+        findings.append({
+            "severity": "error", "check": "compare.op", "change": "changed",
+            "original": sum(op_o.values()), "rewrite": sum(op_r.values()),
+            "items": [f"{k}: {op_o.get(k, 0)} → {op_r.get(k, 0)}" for k in sorted(set(op_o) | set(op_r)) if op_o.get(k, 0) != op_r.get(k, 0)],
+            "message": "Comparison operators changed. A flipped < / > reverses the claim even when the total count is unchanged.",
+        })
+    st_o, st_r = len(STRENGTH.findall(rest_o)), len(STRENGTH.findall(rest_r))
+    if st_o != st_r:
+        findings.append({
+            "severity": "error" if st_r > st_o else "warn", "check": "strength",
+            "change": "increased" if st_r > st_o else "decreased", "original": st_o, "rewrite": st_r,
+            "items": ["original: " + _context(rest_o, m.start(), m.end()) for m in STRENGTH.finditer(rest_o)][:6]
+                     + ["rewrite:  " + _context(rest_r, m.start(), m.end()) for m in STRENGTH.finditer(rest_r)][:6],
+            "message": "Claim-strength words changed. More of them strengthens the claim beyond the source; fewer may weaken it.",
+        })
+
     order = {"error": 0, "warn": 1}
     findings.sort(key=lambda f: (order[f["severity"]], f["check"]))
     return findings
+
+
+def result_of(findings, strict=False):
+    if any(f["severity"] == "error" for f in findings):
+        return "FAIL"
+    if findings:
+        return "FAIL" if strict else "PASS WITH WARNINGS"
+    return "PASS"
 
 
 def render(findings):
@@ -458,6 +510,7 @@ def render(findings):
             lines.append(f"      · {item}")
     if not findings:
         lines.append("No mechanical differences found. This does not prove the meaning is unchanged.")
+    lines.append(f"\nRESULT: {result_of(findings)}")
     return "\n".join(lines)
 
 
@@ -537,6 +590,22 @@ SELFTEST = [
      "读取一个配置文件。", "读取配置文件。", set(), {"number"}),
     ("path survives as plain text",
      "Edit `config/app.yaml`.", "Edit config/app.yaml.", set(), {"literal.path"}),
+    ("flipped comparison keeps the count but is an error",
+     "The effect is significant when p < 0.05.", "The effect is significant when p > 0.05.", {"compare.op"}, set()),
+    ("<= and ≤ are the same operator",
+     "Use at most 3 retries when n <= 3.", "Use at most 3 retries when n ≤ 3.", set(), {"compare.op"}),
+    ("arrows are not comparisons",
+     "A -> B => C", "A to B to C", set(), {"compare.op"}),
+    ("added strong word is an error (en)",
+     "The result suggests the method helps.", "The result proves the method always helps.", {"strength"}, set()),
+    ("added strong word is an error (zh)",
+     "结果表明方法有帮助。", "结果证明方法完全有效。", {"strength"}, set()),
+    ("'一定程度' is not a strong word",
+     "在一定程度上有效。", "在一定程度上有效。", set(), {"strength"}),
+    ("a lost strong word is only a warning",
+     "The method always helps.", "The method helps.", set(), {"strength"}),
+    ("scientific notation equals decimal",
+     "The learning rate is 1e-3.", "The learning rate is 0.001.", set(), {"number"}),
     ("trailing period is not part of a path",
      "Edit config/app.yaml.", "Open and edit config/app.yaml.", set(), {"literal.path", "literal.filename"}),
 ]
@@ -562,6 +631,12 @@ def selftest():
     # 软推荐被替换时必须有 warning：不能静默通过。
     swap = {(f["severity"], f["check"]) for f in compare("最好不要覆盖文件。", "不建议覆盖文件。")}
     total = len(SELFTEST) + 1
+    # RESULT line and severity mapping
+    rr = result_of(compare("The result suggests it helps.", "The result proves it helps."))
+    if rr != "FAIL":
+        failed += 1
+        print("FAIL  strengthened claim must give RESULT: FAIL, got", rr)
+    total += 1
     if ("warn", "modal.not-recommend.soft") in swap:
         print("ok    最好不要 -> 不建议 produces a warning")
     else:
@@ -602,7 +677,7 @@ def main(argv=None):
     findings = [f for f in findings if not any(f["check"].startswith(i) for i in ignore)]
 
     if args.json:
-        print(json.dumps({"findings": findings}, ensure_ascii=False, indent=2))
+        print(json.dumps({"result": result_of(findings, args.strict), "findings": findings}, ensure_ascii=False, indent=2))
     else:
         print(render(findings))
     failing = [f for f in findings if f["severity"] == "error" or args.strict]
