@@ -175,7 +175,7 @@ EN_ONE = re.compile(
     r"attempt|byte|request|more|per)|(?:\s*[.,;]|\s*$))", re.I)
 EN_ONE_LOOSE = re.compile(r"\bonce\b", re.I)
 
-LIST_MARKER = re.compile(r"^[ \t]*(?:\d+[.)]|[-*+])[ \t]+", re.M)
+LIST_MARKER = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\d+[.)]|[-*+])[ \t]+", re.M)   # list items and numbered headings ("## 2. Setup")
 ORDINAL = re.compile(r"(?:第\s*\d+\s*[步条项章节个次]?|\b[Ss]tep\s+\d+\b|\b\d+(?:st|nd|rd|th)\b)")
 ARABIC = re.compile(r"(?<![\w.])\d+(?:\.\d+)?[eE][+-]?\d+(?![\w])|(?<![\w.])\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w])|(?<![\w.])\d+(?:\.\d+)?", re.ASCII)
 
@@ -606,6 +606,8 @@ SELFTEST = [
      "The method always helps.", "The method helps.", set(), {"strength"}),
     ("scientific notation equals decimal",
      "The learning rate is 1e-3.", "The learning rate is 0.001.", set(), {"number"}),
+    ("heading numbering is not a number change",
+     "## Setup\n\nThe run took 30 seconds.", "## 2. Setup\n\nThe run took 30 seconds.", set(), {"number"}),
     ("trailing period is not part of a path",
      "Edit config/app.yaml.", "Open and edit config/app.yaml.", set(), {"literal.path", "literal.filename"}),
 ]
