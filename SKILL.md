@@ -48,6 +48,7 @@ The script compares:
 | `modal.recommend` / `permit` / `ability` / `may` | should, can, may, 建议, 可以, 能 … | warning |
 | `literal.quoted` | "UI labels", 「错误原文」 | warning |
 | `compare.op` | each of `<` `>` `≤` `≥` counted separately (`<=` = `≤`); arrows are not comparisons. A flipped operator keeps the total but changes the claim | error |
+| `compare.dir` | who beats whom: each comparison ("A is better than B", "A 比 B 更好", "A 优于/不如 B", "A > B") becomes a (winner, loser) pair. A pair that returns **reversed** is an error; a lost or new comparison is a warning. Operands are matched fuzzily (a trailing label such as "method A" must match exactly) | error / warning |
 | `strength` | claim-strengthening words (proved, always, definitely, 证明, 一定, 完全, 显然 ...) | error when the rewrite has **more**; warning when fewer |
 
 Errors exit 1. The text output ends with `RESULT: FAIL | PASS WITH WARNINGS | PASS` (`result` in `--json`); quote that line when you hand the check on to another skill or a person. A PASS means nothing mechanical changed, not that the meaning is equivalent. `--json` gives structured output. `--strict` also fails on warnings. `--ignore scope,negation` skips checks by name prefix.
@@ -95,6 +96,7 @@ When the user asks for the full audit, add a table with one row for each origina
 - Regex heuristics, not a parser. Chinese single-character words (应, 能, 不, 无) are matched with exclusion lists (应用, 功能, 不同 …). Expect some false positives. Read the context snippet before you act on a finding.
 - English "may" is both permission and possibility. The script counts it in its own bucket and leaves the decision to Pass 2.
 - Units are not normalized: "30 s" and "30 秒" match on the value 30, and the script does not compare units.
+- `compare.dir` reads a short span on each side of the comparison marker, so long or nested operands and comparisons expressed without a marker ("A leads B by 3 points", "B, unlike A, fails") are not seen; a comparison reworded beyond recognition shows up as a lost + added warning pair, which Pass 2 must resolve by reading.
 - Bare 一 / 两 / one count as numbers only before time or size units, so that articles such as 一个 / a(n) are not counted as numbers.
 
 ## Additional Resources

@@ -17,6 +17,8 @@ that carry meaning and that a simplifying rewrite tends to lose or change:
     quoted       "..." “...” 「...」 (UI labels, error text)
     compare.op   each comparison operator counted separately (< > <= >= ≤ ≥); a flipped
                  operator keeps the total count but is still an error
+    compare.dir  who beats whom: (winner, loser) pairs from "A is better than B", "A 比 B 更好", "A 优于 B", "A 不如 B", "A > B".
+                 A pair that comes back reversed is an error; a lost or new comparison is a warning
     strength     claim-strengthening words (proved, always, definitely, 证明, 一定, 完全 ...):
                  more of them in the rewrite is an error, fewer is a warning
 
@@ -394,6 +396,108 @@ MESSAGES = {
     "scope": "Quantifier changed (all/every/some/所有/每个/部分).",
 }
 
+# ---------------------------------------------------------------------------
+# Comparison direction: "A is better than B" -> "B is better than A" keeps every count, operator and number.
+# Each comparison is reduced to a (winner, loser) pair of operand strings and the pairs are compared.
+# Operand extraction is heuristic (a short span next to the marker), so matching is fuzzy; the check flags, a person decides.
+# ---------------------------------------------------------------------------
+
+_UP_EN = r"(?:better|greater|higher|larger|bigger|faster|stronger|longer|more\s+\w+|superior|safer|cheaper)"
+_DOWN_EN = r"(?:worse|lower|smaller|slower|weaker|shorter|fewer|less\s+\w+|inferior)"
+_EN_THAN = re.compile(r"(?P<a>[^.;:\n]{1,80}?)\s+(?:(?:is|are|was|were|be|being)\s+)?(?:much\s+|far\s+|slightly\s+|significantly\s+|clearly\s+)?(?P<rel>" + _UP_EN + "|" + _DOWN_EN + r")\s+than\s+(?P<b>[^.;:,\n]{1,60})", re.I)
+_EN_VERB = re.compile(r"(?P<a>[^.;:\n]{1,60}?)\s+(?P<rel>outperforms?|beats?|exceeds?|surpasses|outperformed|beat|exceeded|surpassed|underperforms?|trails?|lags?|underperformed|trailed|lagged)(?:\s+behind)?\s+(?P<b>[^.;:,\n]{1,60})", re.I)
+_ZH_BI = re.compile(r"(?P<a>[^，。；;,.\n]{1,24}?)(?<![对相])比(?![如较例喻赛率])(?P<b>[^，。；;,.\n]{1,20}?)(?:更|还|要|稍|略|明显|远|都|也)?(?P<rel>好|强|高|大|快|多|长|优|胜|低|差|弱|小|慢|少|短|劣)")
+_ZH_REL = re.compile(r"(?P<a>[^，。；;,.\n]{1,24}?)(?P<rel>优于|好于|强于|高于|大于|多于|快于|长于|胜过|超过|优先于|劣于|差于|弱于|低于|小于|少于|慢于|短于|不如|逊于|落后于)(?P<b>[^，。；;,.\n]{1,20})")
+_SYM = re.compile(r"(?P<a>[^\s<>=≤≥，。；;,]{1,24})\s*(?P<rel>[<>≤≥]|<=|>=)\s*(?P<b>[^\s<>=≤≥，。；;,]{1,24})")
+_UP_WORDS = ("好","强","高","大","快","多","长","优","胜","better","greater","higher","larger","bigger","faster","stronger","longer","more","superior","safer","cheaper","outperform","beat","exceed","surpass","优于","好于","强于","高于","大于","多于","快于","长于","胜过","超过","优先于",">","≥")
+_STOP = re.compile(r"\b(?:the|a|an|of|in|on|with|that|this|our|its|their)\b|[的这该其而且但是了]")   # lowercase only: "A" / "B" are usually labels, not articles
+
+
+def _op_norm(s):
+    raw = s.strip()
+    m = re.search(r"(?:^|[\s(（])([A-Za-z0-9])[\s)）]*$", raw)      # a trailing label such as "method A" / "方案 2"
+    label = m.group(1).lower() if m else ""
+    s = _STOP.sub("", s)
+    return re.sub(r"[^\w一-鿿]", "", s.lower()) + (("#" + label) if label else "")
+
+
+def _goes_up(rel):
+    r = rel.lower().strip()
+    return any(r.startswith(w) for w in _UP_WORDS)
+
+
+def extract_comparisons(text):
+    """Return a list of (winner, loser, snippet). Operands are short normalized strings."""
+    out, seen = [], set()
+    def add(a, b, up, snip):
+        a, b = _op_norm(a)[-14:], _op_norm(b)[:14]
+        if len(a) < 1 or len(b) < 1 or a == b:
+            return
+        w, l = (a, b) if up else (b, a)
+        key = (w, l, snip[:20])
+        if key not in seen:
+            seen.add(key); out.append((w, l, snip))
+    for pat in (_EN_THAN, _EN_VERB, _ZH_BI, _ZH_REL, _SYM):
+        for m in pat.finditer(text):
+            rel = m.group("rel")
+            if pat is _ZH_REL:
+                up = rel not in ("劣于", "差于", "弱于", "低于", "小于", "少于", "慢于", "短于", "不如", "逊于", "落后于")
+            elif pat is _EN_VERB:
+                up = rel.lower().rstrip("s") not in ("underperform", "trail", "lag", "underperformed", "trailed", "lagged")
+            elif pat is _SYM:
+                up = rel in (">", "≥", ">=")
+            elif pat is _ZH_BI:
+                up = rel in ("好", "强", "高", "大", "快", "多", "长", "优", "胜")
+            else:
+                up = _goes_up(rel)
+            add(m.group("a"), m.group("b"), up, m.group(0).strip())
+    return out
+
+
+def _same(x, y):
+    from difflib import SequenceMatcher
+    x, lx = (x.split("#") + [""])[:2]
+    y, ly = (y.split("#") + [""])[:2]
+    if lx and ly and lx != ly:
+        return False                                   # "method A" vs "method B": different operands
+    if x == y:
+        return True
+    short, long_ = (x, y) if len(x) <= len(y) else (y, x)
+    cjk = bool(re.search(r"[一-鿿]", short))
+    if len(short) >= (2 if cjk else 4) and short in long_:
+        return True
+    if len(short) >= 4:
+        m = SequenceMatcher(None, short, long_).find_longest_match(0, len(short), 0, len(long_))
+        return m.size / len(short) >= 0.7              # long shared run, so light rewording still matches
+    return False
+
+
+def compare_direction(orig_text, new_text):
+    co, cn = extract_comparisons(orig_text), extract_comparisons(new_text)
+    findings = []
+    matched_new = set()
+    for w, l, snip in co:
+        same = rev = False
+        for j, (w2, l2, s2) in enumerate(cn):
+            if _same(w, w2) and _same(l, l2):
+                same = True; matched_new.add(j)
+            elif _same(w, l2) and _same(l, w2):
+                rev = True; matched_new.add(j)
+        if rev and not same:
+            findings.append({"severity": "error", "check": "compare.dir", "change": "reversed", "original": 1, "rewrite": 1,
+                             "items": ["original: " + snip, "rewrite:  " + next(s2 for w2, l2, s2 in cn if _same(w, l2) and _same(l, w2))],
+                             "message": "Who beats whom is reversed. Counts, operators and numbers can all match while the claim flips."})
+        elif not same:
+            findings.append({"severity": "warn", "check": "compare.dir", "change": "lost", "original": 1, "rewrite": 0,
+                             "items": ["original: " + snip],
+                             "message": "A comparison in the original has no counterpart in the rewrite (it may have been rephrased past the heuristic; read it)."})
+    for j, (w2, l2, s2) in enumerate(cn):
+        if j not in matched_new:
+            findings.append({"severity": "warn", "check": "compare.dir", "change": "added", "original": 0, "rewrite": 1,
+                             "items": ["rewrite:  " + s2], "message": "A comparison appears in the rewrite that the original does not state."})
+    return findings
+
+
 
 def compare(original, rewrite):
     findings = []
@@ -466,6 +570,8 @@ def compare(original, rewrite):
             "items": (["original: " + h for h in hits_o[:6]] + ["rewrite:  " + h for h in hits_r[:6]]),
             "message": MESSAGES[name],
         })
+
+    findings.extend(compare_direction(rest_o, rest_r))
 
     op_o, op_r = operator_counts(rest_o), operator_counts(rest_r)
     if op_o != op_r:
@@ -608,6 +714,22 @@ SELFTEST = [
      "The learning rate is 1e-3.", "The learning rate is 0.001.", set(), {"number"}),
     ("heading numbering is not a number change",
      "## Setup\n\nThe run took 30 seconds.", "## 2. Setup\n\nThe run took 30 seconds.", set(), {"number"}),
+    ("reversed comparison is an error (en)",
+     "Method A is better than method B.", "Method B is better than method A.", {"compare.dir"}, set()),
+    ("same comparison, different words (en)",
+     "Method A is better than method B.", "Method A outperforms method B.", set(), {"compare.dir"}),
+    ("reversed comparison is an error (zh)",
+     "随机稀疏连线比真实连线更好。", "真实连线比随机稀疏连线更好。", {"compare.dir"}, set()),
+    ("比 and 优于 agree",
+     "方案 A 比方案 B 好。", "方案 A 优于方案 B。", set(), {"compare.dir"}),
+    ("优于 reversed into 不如 is an error",
+     "方案 A 优于方案 B。", "方案 A 不如方案 B。", {"compare.dir"}, set()),
+    ("A worse than B equals B better than A",
+     "方案 A 比方案 B 差。", "方案 B 比方案 A 好。", set(), {"compare.dir"}),
+    ("symbolic comparison flipped keeps the operator count",
+     "Accuracy: A > B on all sets.", "Accuracy: B > A on all sets.", {"compare.dir"}, set()),
+    ("比如 / 比较 are not comparisons",
+     "比如这个参数；比较两个版本。", "例如这个参数；对照两个版本。", set(), {"compare.dir"}),
     ("trailing period is not part of a path",
      "Edit config/app.yaml.", "Open and edit config/app.yaml.", set(), {"literal.path", "literal.filename"}),
 ]
